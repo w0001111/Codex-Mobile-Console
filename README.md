@@ -4,7 +4,7 @@
 
 通过手机网页或微信、飞书、Telegram 等消息软件，管理你 Mac 上已有的 Codex 任务。
 
-[下载 v0.2.0-rc.6（预发布版）](https://github.com/w0001111/Codex-Mobile-Console/releases/tag/v0.2.0-rc.6) · [安装说明](INSTALL.md) · [使用说明与截图](USAGE.md)
+[下载 v0.2.0-rc.7（预发布版）](https://github.com/w0001111/Codex-Mobile-Console/releases/tag/v0.2.0-rc.7) · [安装说明](INSTALL.md) · [使用说明与截图](USAGE.md)
 
 ## 界面展示
 

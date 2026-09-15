@@ -171,12 +171,17 @@ def build(destination, denied):
                       'archive_sha256': hashlib.sha256(destination.read_bytes()).hexdigest()}, indent=2))
 
 
+def load_denied(path):
+    denied = json.loads(path.read_text()) if path else []
+    if not isinstance(denied, list) or any(not isinstance(v, str) or len(v.strip()) < 4 for v in denied):
+        raise ValueError('Private deny-list entries must contain at least four characters.')
+    return denied
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--deny-file', type=Path, help='Private JSON list outside the release tree; never bundled or printed')
     args = parser.parse_args()
-    denied = json.loads(args.deny_file.read_text()) if args.deny_file else []
-    if not isinstance(denied, list) or any(not isinstance(v, str) or len(v) < 8 for v in denied):
-        raise SystemExit('Invalid private deny-list.')
+    denied = load_denied(args.deny_file)
     build(args.output.resolve(), denied)

@@ -1,7 +1,7 @@
 {
-  "version": "0.2.0-rc.6",
-  "prepared_at": "2026-09-15T08:39:38.472269+00:00",
-  "status": "self_hosted_multichannel_release_candidate_not_published",
+  "version": "0.2.0-rc.7",
+  "prepared_at": "2026-09-15T10:09:44.910668+00:00",
+  "status": "privacy_cleanup_release_candidate",
   "distribution": "download_and_self_host",
   "original_source_files_verified": 42,
   "original_source_files_changed": 0,
@@ -32,7 +32,7 @@
     "cc_connect_platform_packages_initial_run": "all_passed",
     "cc_connect_patch_specific_install_gate": "passed",
     "cc_connect_CUJ_isolated_run": "passed",
-    "frontend_build": "passed in rc.6; version display rebuilt",
+    "frontend_build": "passed in rc.7; version display rebuilt",
     "frontend_api_contract_checks": "passed again in rc.3",
     "npm_production_known_vulnerabilities": 0,
     "python_and_shell_syntax": "passed again in rc.3: 39 Python files, 5 shell scripts",
@@ -89,7 +89,15 @@
     "screenshot_packaging_integrity_checks": {
       "passed": 10
     },
-    "screenshot_visual_review": "four synthetic screenshots inspected; no actual user data present; not OCR"
+    "screenshot_visual_review": "four synthetic screenshots inspected; no actual user data present; not OCR",
+    "privacy_cleanup_regression": {
+      "mobile_python_tests_passed": 192,
+      "bridge_python_tests_passed": 68,
+      "release_signature_and_privacy_tests_passed": 11,
+      "frontend_build": "passed",
+      "frontend_api_contract_checks": "passed",
+      "runtime_behavior_changes": false
+    }
   },
   "upstream_test_observations": [
     "The first all-package Go run failed in two asynchronous model/cache tests and one release_local engine temporary-directory cleanup test; it is not reported as a clean full-suite pass.",
@@ -125,5 +133,10 @@
     "Application behavior unchanged; version display rebuilt for rc.6."
   ],
   "author": "w0001111",
-  "license": "MIT"
+  "license": "MIT",
+  "release_changes": [
+    "Use neutral synthetic project labels and paths in all reachable source history.",
+    "Allow private release deny-list entries with at least four characters and test validation.",
+    "Refresh release version and signed distribution; withdraw superseded affected assets."
+  ]
 }

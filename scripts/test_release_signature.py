@@ -98,5 +98,21 @@ class ReleaseSignatureTests(unittest.TestCase):
             self.assertTrue(package_release.inspect(public.name, public.read_bytes(), []))
 
 
+    def test_private_deny_list_accepts_short_labels_and_rejects_too_short_values(self):
+        import json
+        path = self.root / 'private-deny.json'
+        value = '示例机密'
+        path.write_text(json.dumps([value]))
+        denied = package_release.load_denied(path)
+        self.assertEqual(denied, [value])
+        self.assertEqual(package_release.inspect('fixture.py', value.encode(), denied),
+                         [{'file': 'fixture.py', 'rule': 'operator_private_value'}])
+        self.assertEqual(package_release.inspect('fixture.py', b'generic example', denied), [])
+        for invalid in (['abc'], ['    '], [1234], {'name': value}):
+            path.write_text(json.dumps(invalid))
+            with self.assertRaises(ValueError):
+                package_release.load_denied(path)
+
+
 if __name__ == '__main__':
     unittest.main()

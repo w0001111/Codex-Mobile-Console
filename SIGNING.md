@@ -27,8 +27,8 @@ printf 'release-author namespaces="codex-mobile-release" ' > release.allowed_sig
 cat release-signing.pub >> release.allowed_signers
 ssh-keygen -Y verify \
   -f release.allowed_signers -I release-author -n codex-mobile-release \
-  -s codex-mobile-console-0.2.0-rc.6.zip.sig \
-  < codex-mobile-console-0.2.0-rc.6.zip
+  -s codex-mobile-console-0.2.0-rc.7.zip.sig \
+  < codex-mobile-console-0.2.0-rc.7.zip
 ```
 
 退出码为 0，且显示 `Good ... signature` 才算验证成功。没有验证成功时，不要执行包内程序。
@@ -37,8 +37,8 @@ ssh-keygen -Y verify \
 已信任本项目工具源码时，也可使用 Python 3.9+ 的辅助命令：
 
 ```sh
-python3 scripts/release_signature.py verify ../codex-mobile-console-0.2.0-rc.6.zip \
-  --signature ../codex-mobile-console-0.2.0-rc.6.zip.sig \
+python3 scripts/release_signature.py verify ../codex-mobile-console-0.2.0-rc.7.zip \
+  --signature ../codex-mobile-console-0.2.0-rc.7.zip.sig \
   --public-key release-signing.pub \
   --trusted-fingerprint SHA256:JtidyYqZffrkiseyvDLawmxGJmW2r29NiX6CScEn6Kg
 ```
