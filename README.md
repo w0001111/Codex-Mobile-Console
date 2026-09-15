@@ -6,6 +6,20 @@
 
 [下载 v0.2.0-rc.6（预发布版）](https://github.com/w0001111/Codex-Mobile-Console/releases/tag/v0.2.0-rc.6) · [安装说明](INSTALL.md) · [使用说明与截图](USAGE.md)
 
+## 界面展示
+
+会话首页、任务详情和登录记录直接预览如下。点击图片可查看大图。
+
+**截图全部使用虚构演示数据，不包含真实研究内容、账号凭据或服务器地址。**
+
+<p align="center">
+  <a href="docs/screenshots/overview.png"><img src="docs/screenshots/overview.png" width="250" align="top" alt="会话首页：示例任务、状态概览和演示额度"></a>
+  <a href="docs/screenshots/conversation.png"><img src="docs/screenshots/conversation.png" width="250" align="top" alt="任务详情：虚构待办清单的最终回复和消息输入框"></a>
+  <a href="docs/screenshots/logins.png"><img src="docs/screenshots/logins.png" width="250" align="top" alt="登录管理：虚构的示例设备和登录记录"></a>
+</p>
+
+从左到右：**会话首页 · 任务详情 · 登录记录**。完整操作步骤及空白登录页截图见 [使用说明](USAGE.md)。
+
 ## 从这里开始
 
 | 你现在想做什么 | 看哪份说明 |
