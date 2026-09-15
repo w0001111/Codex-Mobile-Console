@@ -1,0 +1,5 @@
+# Caddy runs on the same Mac as the console. HTTPS_HOST is your own hostname.
+# Use a TCP relay/tunnel if that Mac is behind NAT. No tunnel is installed here.
+{$HTTPS_HOST} {
+    reverse_proxy 127.0.0.1:9840
+}

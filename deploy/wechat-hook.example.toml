@@ -1,0 +1,15 @@
+# Compatibility filename: the commands now work across the pinned cc-connect
+# platforms. Prefer scripts/configure.py, which creates a complete private config.
+# Restrict project admin_from and platform allow_from to your own user ID.
+# First binding is completed using the local setup wizard's one-time command.
+[[commands]]
+name = "control"
+description = "Local desktop task console"
+argv = ["/absolute/path/to/console/.venv/bin/python", "/absolute/path/to/console/bridge/wechat_entry.py"]
+work_dir = "/absolute/path/to/console"
+
+[[commands]]
+name = "console-router"
+description = "Route the selected platform to a desktop task"
+argv = ["/absolute/path/to/console/.venv/bin/python", "/absolute/path/to/console/bridge/wechat_entry.py", "--route-message"]
+work_dir = "/absolute/path/to/console"

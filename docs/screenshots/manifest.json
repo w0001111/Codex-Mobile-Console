@@ -1,0 +1,26 @@
+{
+  "source": "isolated release frontend with synthetic fixtures",
+  "contains_real_user_data": false,
+  "screenshots": {
+    "login.png": {
+      "sha256": "be6cf3ade63c8b51443afd254ab44c3e2e495e0c3f8eb2385aa08c2e17b8f9cd",
+      "width": 430,
+      "height": 932
+    },
+    "overview.png": {
+      "sha256": "a26c819d9b546182cfc1674a6c7f77ee3b81ceb1102366f58ee668c088aa78bb",
+      "width": 430,
+      "height": 1419
+    },
+    "conversation.png": {
+      "sha256": "aca82681eb76b47ac73680d47a3b21245b9a8aa08a0d95d0433e2aeab4c4e55c",
+      "width": 430,
+      "height": 932
+    },
+    "logins.png": {
+      "sha256": "182ba729561ed3596d3baf70af0f7c9b21adff29f3a5566ae2e015fc9b84f3e4",
+      "width": 430,
+      "height": 932
+    }
+  }
+}

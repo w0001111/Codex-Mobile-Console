@@ -1,0 +1,992 @@
+--- a/cmd/cc-connect/main.go
++++ b/cmd/cc-connect/main.go
+@@ -522,7 +522,11 @@
+ 
+ 		// Wire global custom commands
+ 		for _, c := range cfg.Commands {
+-			engine.AddCommand(c.Name, c.Description, c.Prompt, c.Exec, c.WorkDir, "config")
++			if len(c.Argv) > 0 {
++				engine.AddArgvCommand(c.Name, c.Description, c.Argv, c.WorkDir, "config")
++			} else {
++				engine.AddCommand(c.Name, c.Description, c.Prompt, c.Exec, c.WorkDir, "config")
++			}
+ 		}
+ 
+ 		// Wire command persistence callbacks
+@@ -1073,6 +1077,7 @@
+ 			bridgeSrv.RegisterEngine(cfg.Projects[i].Name, e, bp)
+ 			e.AddPlatform(bp)
+ 		}
++		bridgeSrv.SetListenHost(cfg.Bridge.Host)
+ 		bridgeSrv.Start()
+ 	}
+ 
+@@ -1102,6 +1107,7 @@
+ 			port = 9820
+ 		}
+ 		mgmtSrv = core.NewManagementServer(port, cfg.Management.Token, cfg.Management.CORSOrigins)
++		mgmtSrv.SetListenHost(cfg.Management.Host)
+ 		for i, e := range engines {
+ 			mgmtSrv.RegisterEngine(cfg.Projects[i].Name, e)
+ 		}
+@@ -1766,7 +1772,11 @@
+ 	// Reload custom commands
+ 	engine.ClearCommands("config")
+ 	for _, c := range cfg.Commands {
+-		engine.AddCommand(c.Name, c.Description, c.Prompt, c.Exec, c.WorkDir, "config")
++		if len(c.Argv) > 0 {
++			engine.AddArgvCommand(c.Name, c.Description, c.Argv, c.WorkDir, "config")
++		} else {
++			engine.AddCommand(c.Name, c.Description, c.Prompt, c.Exec, c.WorkDir, "config")
++		}
+ 	}
+ 	result.CommandsUpdated = len(cfg.Commands)
+ 
+--- /dev/null
++++ b/config/command_argv_test.go
+@@ -0,0 +1,27 @@
++package config
++
++import (
++	"github.com/BurntSushi/toml"
++	"testing"
++)
++
++func TestCommandArgvConfig(t *testing.T) {
++	var cfg Config
++	if _, err := toml.Decode(`[[commands]]
++name = "control"
++argv = ["/usr/bin/helper", "--json"]
++`, &cfg); err != nil {
++		t.Fatal(err)
++	}
++	cfg.Projects = []ProjectConfig{validProject("test")}
++	if err := cfg.validate(); err != nil {
++		t.Fatal(err)
++	}
++	if len(cfg.Commands[0].Argv) != 2 {
++		t.Fatal("argv not decoded")
++	}
++	cfg.Commands[0].Exec = "echo unsafe"
++	if err := cfg.validate(); err == nil {
++		t.Fatal("mixed shell/argv command was accepted")
++	}
++}
+--- a/config/config.go
++++ b/config/config.go
+@@ -157,6 +157,7 @@
+ 
+ // BridgeConfig controls the WebSocket bridge for external platform adapters.
+ type BridgeConfig struct {
++	Host        string   `toml:"host,omitempty"`         // bind host; default 127.0.0.1; remote access requires an explicit host
+ 	Enabled     *bool    `toml:"enabled"`                // default false
+ 	Port        int      `toml:"port,omitempty"`         // listen port; default 9810
+ 	Token       string   `toml:"token,omitempty"`        // shared secret for authentication; required unless insecure=true
+@@ -177,6 +178,7 @@
+ 
+ // ManagementConfig controls the HTTP Management API for external tools.
+ type ManagementConfig struct {
++	Host        string   `toml:"host,omitempty"`         // bind host; default 127.0.0.1; remote access requires an explicit host
+ 	Enabled     *bool    `toml:"enabled"`                // default false
+ 	Port        int      `toml:"port,omitempty"`         // listen port; default 9820
+ 	Token       string   `toml:"token,omitempty"`        // shared secret for authentication; required
+@@ -600,11 +602,12 @@
+ 
+ // CommandConfig defines a user-customizable slash command that expands a prompt template or executes a shell command.
+ type CommandConfig struct {
+-	Name        string `toml:"name"`
+-	Description string `toml:"description"`
+-	Prompt      string `toml:"prompt"`   // prompt template (mutually exclusive with Exec)
+-	Exec        string `toml:"exec"`     // shell command to execute (mutually exclusive with Prompt)
+-	WorkDir     string `toml:"work_dir"` // optional: working directory for exec command
++	Name        string   `toml:"name"`
++	Description string   `toml:"description"`
++	Prompt      string   `toml:"prompt"`   // prompt template (mutually exclusive with Exec)
++	Exec        string   `toml:"exec"`     // shell command to execute (mutually exclusive with Prompt)
++	Argv        []string `toml:"argv"`     // shell-free command, authenticated context as JSON stdin
++	WorkDir     string   `toml:"work_dir"` // optional: working directory for exec command
+ }
+ 
+ type LogConfig struct {
+@@ -994,6 +997,11 @@
+ }
+ 
+ func (c *Config) validateInternal(permissive bool) error {
++	for _, command := range c.Commands {
++		if len(command.Argv) > 0 && (strings.TrimSpace(command.Argv[0]) == "" || command.Exec != "" || command.Prompt != "") {
++			return fmt.Errorf("command %q: argv requires an executable and cannot be combined with exec or prompt", command.Name)
++		}
++	}
+ 	if err := validateDisplayConfig("display", &c.Display); err != nil {
+ 		return err
+ 	}
+--- /dev/null
++++ b/config/listen_host_test.go
+@@ -0,0 +1,14 @@
++package config
++
++import (
++	"github.com/BurntSushi/toml"
++	"testing"
++)
++
++func TestManagementAndBridgeListenHostConfig(t *testing.T) {
++	var cfg Config
++	_, err := toml.Decode("[management]\nhost = '127.0.0.1'\n[bridge]\nhost = '::1'\n", &cfg)
++	if err != nil || cfg.Management.Host != "127.0.0.1" || cfg.Bridge.Host != "::1" {
++		t.Fatalf("listener host config not preserved: %v", err)
++	}
++}
+--- a/core/bridge.go
++++ b/core/bridge.go
+@@ -7,6 +7,7 @@
+ 	"encoding/json"
+ 	"fmt"
+ 	"log/slog"
++	"net"
+ 	"net/http"
+ 	"strconv"
+ 	"strings"
+@@ -24,6 +25,7 @@
+ // A single instance is created globally; each project engine receives a
+ // lightweight BridgePlatform handle that delegates to this server.
+ type BridgeServer struct {
++	listenHost  string
+ 	port        int
+ 	token       string
+ 	path        string
+@@ -219,7 +221,7 @@
+ 	mux.HandleFunc("/bridge/sessions", bs.corsHTTP(bs.authHTTP(bs.handleSessions)))
+ 	mux.HandleFunc("/bridge/sessions/", bs.corsHTTP(bs.authHTTP(bs.handleSessionRoutes)))
+ 
+-	addr := fmt.Sprintf(":%d", bs.port)
++	addr := net.JoinHostPort(localListenHost(bs.listenHost), strconv.Itoa(bs.port))
+ 	bs.server = &http.Server{Addr: addr, Handler: mux}
+ 
+ 	go func() {
+@@ -1438,3 +1440,8 @@
+ 	result["elements"] = elements
+ 	return result
+ }
++
++// SetListenHost sets the bind host before Start. Empty defaults to loopback.
++func (bs *BridgeServer) SetListenHost(host string) {
++	bs.listenHost = host
++}
+--- a/core/command.go
++++ b/core/command.go
+@@ -14,10 +14,22 @@
+ type CustomCommand struct {
+ 	Name        string // command name without leading "/"
+ 	Description string
+-	Prompt      string // template with {{1}}, {{2}}, {{2*}}, {{args}} placeholders
+-	Exec        string // shell command to execute (mutually exclusive with Prompt)
+-	WorkDir     string // optional: working directory for exec command
+-	Source      string // "config" or "agent" (for display)
++	Prompt      string   // template with {{1}}, {{2}}, {{2*}}, {{args}} placeholders
++	Exec        string   // shell command to execute (mutually exclusive with Prompt)
++	Argv        []string // direct executable and fixed arguments; user context is JSON on stdin
++	WorkDir     string   // optional: working directory for exec command
++	Source      string   // "config" or "agent" (for display)
++}
++
++// AddArgv registers a shell-free command. Arguments are fixed by configuration;
++// chat arguments are never interpolated into the executable or command line.
++func (r *CommandRegistry) AddArgv(name, description string, argv []string, workDir, source string) {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	r.commands[strings.ToLower(name)] = &CustomCommand{
++		Name: name, Description: description, Argv: append([]string(nil), argv...),
++		WorkDir: workDir, Source: source,
++	}
+ }
+ 
+ // CommandRegistry holds all available custom commands and resolves agent command files.
+--- /dev/null
++++ b/core/command_argv.go
+@@ -0,0 +1,100 @@
++package core
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"fmt"
++	"io"
++	"os"
++	"os/exec"
++	"strings"
++	"time"
++)
++
++// argvCommandInput deliberately excludes credentials, attachments and quoted
++// platform content. Identity is supplied by the authenticated platform adapter.
++type argvCommandInput struct {
++	Version        int      `json:"version"`
++	Project        string   `json:"project"`
++	Platform       string   `json:"platform"`
++	SessionKey     string   `json:"session_key"`
++	UserID         string   `json:"user_id"`
++	MessageID      string   `json:"message_id"`
++	Args           []string `json:"args"`
++	HasAttachments bool     `json:"has_attachments,omitempty"`
++}
++
++// cappedCommandOutput continues draining the child after reaching the cap.
++const maxCommandOutputBytes = 4 << 20 // resource guard; never return a silently cut reply
++
++type cappedCommandOutput struct {
++	buffer   bytes.Buffer
++	overflow bool
++}
++
++// Do not embed bytes.Buffer: its promoted ReadFrom would let io.Copy bypass Write.
++func (b *cappedCommandOutput) Len() int       { return b.buffer.Len() }
++func (b *cappedCommandOutput) String() string { return b.buffer.String() }
++
++func (b *cappedCommandOutput) Write(p []byte) (int, error) {
++	n := len(p)
++	remaining := maxCommandOutputBytes - b.Len()
++	if n > remaining {
++		b.overflow = true
++	}
++	if remaining > 0 {
++		_, _ = b.buffer.Write(p[:min(len(p), remaining)])
++	}
++	return n, nil
++}
++
++func runArgvCommand(ctx context.Context, command *CustomCommand, input argvCommandInput) (string, error) {
++	if len(command.Argv) == 0 || strings.TrimSpace(command.Argv[0]) == "" {
++		return "", fmt.Errorf("empty executable")
++	}
++	data, err := json.Marshal(input)
++	if err != nil || len(data) > 32768 {
++		return "", fmt.Errorf("invalid or oversized command input")
++	}
++	cmd := exec.CommandContext(ctx, command.Argv[0], command.Argv[1:]...)
++	cmd.Dir = command.WorkDir
++	cmd.Stdin = bytes.NewReader(data)
++	var output cappedCommandOutput
++	cmd.Stdout = &output
++	// Child diagnostics may contain credentials; never relay stderr to chat.
++	cmd.Stderr = io.Discard
++	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
++	cmd.WaitDelay = 2 * time.Second
++	if err := cmd.Run(); err != nil {
++		// Do not expose arbitrary subprocess arguments or provider diagnostics.
++		return "", fmt.Errorf("external command failed")
++	}
++	if output.overflow {
++		return "", fmt.Errorf("external command output exceeds resource limit")
++	}
++	return strings.ToValidUTF8(output.String(), ""), nil
++}
++
++func (e *Engine) executeArgvCommand(p Platform, msg *Message, command *CustomCommand, args []string) {
++	ctx, cancel := context.WithTimeout(e.ctx, 60*time.Second)
++	defer cancel()
++	output, err := runArgvCommand(ctx, command, argvCommandInput{
++		Version: 1, Project: e.name, Platform: msg.Platform,
++		SessionKey: msg.SessionKey, UserID: msg.UserID,
++		MessageID: msg.MessageID, Args: args,
++	})
++	if ctx.Err() != nil {
++		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgCommandExecTimeout, command.Name))
++		return
++	}
++	if err != nil {
++		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgCommandExecError, command.Name, ""))
++		return
++	}
++	output = strings.TrimSpace(output)
++	if output == "" {
++		output = e.i18n.T(MsgCommandExecSuccess)
++	}
++	e.reply(p, msg.ReplyCtx, output)
++}
+--- /dev/null
++++ b/core/command_argv_test.go
+@@ -0,0 +1,107 @@
++package core
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"os"
++	"strings"
++	"testing"
++	"time"
++)
++
++// The test executable is the external command boundary; no shell or model runs.
++func TestArgvCommandHelper(t *testing.T) {
++	if os.Getenv("CC_ARGV_TEST_HELPER") != "1" {
++		return
++	}
++	var input argvCommandInput
++	if err := json.NewDecoder(os.Stdin).Decode(&input); err != nil {
++		os.Exit(2)
++	}
++	if len(input.Args) > 0 && input.Args[0] == "delay" {
++		time.Sleep(10 * time.Second)
++	}
++	if len(input.Args) > 0 && input.Args[0] == "fail" {
++		fmt.Fprint(os.Stderr, "private-secret-do-not-relay")
++		os.Exit(3)
++	}
++	if len(input.Args) > 0 && input.Args[0] == "long-output" {
++		fmt.Print(strings.Repeat("中文🙂", 7000) + "END-OF-REPLY")
++		os.Exit(0)
++	}
++	if len(input.Args) > 0 && input.Args[0] == "overflow" {
++		fmt.Print(strings.Repeat("a", (4<<20)+1))
++		os.Exit(0)
++	}
++	_ = json.NewEncoder(os.Stdout).Encode(input)
++	os.Exit(0)
++}
++
++func argvTestCommand(t *testing.T) *CustomCommand {
++	t.Helper()
++	t.Setenv("CC_ARGV_TEST_HELPER", "1")
++	return &CustomCommand{Name: "control", Argv: []string{os.Args[0], "-test.run=^TestArgvCommandHelper$"}, WorkDir: t.TempDir()}
++}
++
++func TestArgvCommand_InputIsJSONNotShell(t *testing.T) {
++	command := argvTestCommand(t)
++	input := argvCommandInput{Version: 1, Project: "p", Platform: "test", UserID: "u", SessionKey: "s", MessageID: "m",
++		Args: []string{"$(touch NEVER_CREATE)", "`; echo unsafe", "中文", "line\nbreak"}}
++	output, err := runArgvCommand(context.Background(), command, input)
++	if err != nil {
++		t.Fatal(err)
++	}
++	var got argvCommandInput
++	if err := json.Unmarshal([]byte(output), &got); err != nil {
++		t.Fatal(err)
++	}
++	if fmt.Sprint(got) != fmt.Sprint(input) {
++		t.Fatalf("input changed: %v", got)
++	}
++	if _, err := os.Stat(command.WorkDir + "/NEVER_CREATE"); !os.IsNotExist(err) {
++		t.Fatal("shell payload executed")
++	}
++}
++
++func TestArgvCommand_FailureDoesNotExposeDiagnostics(t *testing.T) {
++	output, err := runArgvCommand(context.Background(), argvTestCommand(t), argvCommandInput{Args: []string{"fail"}})
++	if err == nil || output != "" || strings.Contains(err.Error(), "private-secret") {
++		t.Fatalf("unsafe error: %q %v", output, err)
++	}
++}
++
++func TestArgvCommand_Deadline(t *testing.T) {
++	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
++	defer cancel()
++	_, err := runArgvCommand(ctx, argvTestCommand(t), argvCommandInput{Args: []string{"delay"}})
++	if err == nil || ctx.Err() == nil {
++		t.Fatalf("expected timeout: %v", err)
++	}
++}
++
++func TestArgvCommand_OutputCap(t *testing.T) {
++	var output cappedCommandOutput
++	n, err := output.Write([]byte(strings.Repeat("a", maxCommandOutputBytes+1)))
++	if n != maxCommandOutputBytes+1 || err != nil || output.Len() != maxCommandOutputBytes || !output.overflow {
++		t.Fatal("output was not safely capped and drained")
++	}
++}
++
++func TestArgvCommandFullReplyBeyondOldCaps(t *testing.T) {
++	c := argvTestCommand(t)
++	p := &stubPlatformEngine{n: "test"}
++	e := newTestEngine()
++	e.executeArgvCommand(p, &Message{Platform: "test", UserID: "u", MessageID: "m"}, c, []string{"long-output"})
++	got := p.getSent()
++	want := strings.Repeat("中文🙂", 7000) + "END-OF-REPLY"
++	if len(got) != 1 || got[0] != want {
++		t.Fatal("full reply was lost before platform chunking")
++	}
++}
++func TestArgvCommandOversizedOutputFailsWithoutPartialReply(t *testing.T) {
++	output, err := runArgvCommand(context.Background(), argvTestCommand(t), argvCommandInput{Args: []string{"overflow"}})
++	if err == nil || output != "" {
++		t.Fatal("oversized output must fail explicitly, not return a partial answer")
++	}
++}
+--- /dev/null
++++ b/core/console_install_test.go
+@@ -0,0 +1,76 @@
++package core
++
++import (
++	"encoding/json"
++	"os"
++	"os/exec"
++	"path/filepath"
++	"regexp"
++	"strings"
++	"testing"
++)
++
++// Opt-in installed-package acceptance: real engine -> Python stdin adapter ->
++// local binding -> pairing -> password check. No platform network or model call.
++func TestConsoleInstalledPython(t *testing.T) {
++	root, python := os.Getenv("CC_CONSOLE_ROOT"), os.Getenv("CC_CONSOLE_PYTHON")
++	if root == "" || python == "" {
++		t.Skip("installed console paths not supplied")
++	}
++	state := t.TempDir()
++	t.Setenv("MOBILE_STATE_DIR", state)
++	t.Setenv("PYTHONPATH", filepath.Join(root, "bridge")+string(os.PathListSeparator)+filepath.Join(root, "mobile-ui"))
++	call := func(code string) string {
++		out, err := exec.Command(python, "-c", code).CombinedOutput()
++		if err != nil {
++			t.Fatalf("console helper failed: %v", err)
++		}
++		return strings.TrimSpace(string(out))
++	}
++	token := call(`from channel_access import begin_binding,write_private,STATE
++write_private(STATE,'public.json',{'url':'https://console.example.test','ready':True})
++print(begin_binding({'platform':'telegram','project':'test','user_id':'owner'}))`)
++	e := newTestEngine()
++	e.name = "test"
++	e.SetAdminFrom("owner")
++	p := &stubPlatformEngine{n: "telegram"}
++	e.AddArgvCommand(consoleRouterName, "console", []string{python, filepath.Join(root, "bridge/wechat_entry.py"), "--route-message"}, root, "config")
++	msg := &Message{Platform: "telegram", UserID: "owner", SessionKey: "private-chat", MessageID: "bind-message"}
++	if !e.routeConsoleMessage(p, msg, "绑定控制台 "+token) {
++		t.Fatal("binding not handled")
++	}
++	var owner map[string]any
++	b, err := os.ReadFile(filepath.Join(state, "owner.json"))
++	if err != nil || json.Unmarshal(b, &owner) != nil || owner["session_key"] != "private-chat" {
++		t.Fatal("binding failed")
++	}
++	call(`import json,auth
++source=json.loads((auth.STATE/'owner.json').read_text())
++auth.set_password(source,'SyntheticConsoleOnlyPassword')`)
++	msg.MessageID = "pair-message"
++	if !e.routeConsoleMessage(p, msg, "界面") {
++		t.Fatal("pair not handled")
++	}
++	got := p.getSent()
++	reply := got[len(got)-1]
++	match := regexp.MustCompile(`[A-F0-9]{5}(?:-[A-F0-9]{5}){3}`).FindString(reply)
++	if match == "" {
++		t.Fatal("pair code missing")
++	}
++	t.Setenv("CC_SYNTHETIC_PAIR", strings.ReplaceAll(match, "-", ""))
++	if call(`import os,auth
++result,status=auth.exchange(os.environ['CC_SYNTHETIC_PAIR'],password='SyntheticConsoleOnlyPassword')
++assert result and status=='ok'
++assert auth.session(result[0])[0]['platform']=='telegram'
++assert auth.exchange(os.environ['CC_SYNTHETIC_PAIR'],password='SyntheticConsoleOnlyPassword')[0] is None
++print('ok')`) != "ok" {
++		t.Fatal("password or one-use pairing failed")
++	}
++	msg.SessionKey = "other-chat"
++	msg.MessageID = "not-owner-session"
++	e.routeConsoleMessage(p, msg, "界面")
++	got = p.getSent()
++	if !strings.Contains(got[len(got)-1], "未绑定") {
++		t.Fatal("other session admitted")
++	}
++}
+--- /dev/null
++++ b/core/console_router.go
+@@ -0,0 +1,76 @@
++package core
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"strings"
++	"time"
++)
++
++const consoleRouterName = "console-router"
++
++func parseConsoleRoute(output string) (bool, string, error) {
++	var result struct {
++		Handled  *bool  `json:"handled"`
++		Response string `json:"response"`
++	}
++	if err := json.Unmarshal([]byte(output), &result); err != nil || result.Handled == nil {
++		return true, "", fmt.Errorf("invalid console route response")
++	}
++	if (*result.Handled && strings.TrimSpace(result.Response) == "") || (!*result.Handled && result.Response != "") {
++		return true, "", fmt.Errorf("ambiguous console route response")
++	}
++	return *result.Handled, result.Response, nil
++}
++
++// Chunk before the platform boundary, preserving every Unicode code point.
++// Each platform remains responsible for its own formatting and API limits.
++func (e *Engine) replyConsole(p Platform, replyCtx any, text string) {
++	runes := []rune(text)
++	const size = 1000
++	total := (len(runes) + size - 1) / size
++	for index, start := 0, 0; start < len(runes); index, start = index+1, start+size {
++		end := min(start+size, len(runes))
++		if err := e.replyWithError(p, replyCtx, string(runes[start:end])); err != nil {
++			// An uncertain API failure may already have delivered this chunk.
++			// Never automatically resend it or silently claim complete delivery.
++			e.reply(p, replyCtx, e.i18n.Tf(MsgConsoleIncomplete, index, total))
++			return
++		}
++	}
++}
++
++func (e *Engine) routeConsoleMessage(p Platform, msg *Message, content string) bool {
++	if e.commands == nil || strings.HasPrefix(content, "/") || strings.HasPrefix(content, "!") {
++		return false
++	}
++	command, ok := e.commands.Resolve(consoleRouterName)
++	if !ok || command.Source != "config" || len(command.Argv) == 0 {
++		return false
++	}
++	// A configured console route fails closed before reaching any Agent.
++	if msg.Platform == "" || msg.Platform != p.Name() || msg.UserID == "" || msg.SessionKey == "" || msg.MessageID == "" || !e.isAdmin(msg.UserID) {
++		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgConsoleDenied))
++		return true
++	}
++	ctx, cancel := context.WithTimeout(e.ctx, 60*time.Second)
++	defer cancel()
++	output, err := runArgvCommand(ctx, command, argvCommandInput{
++		Version: 1, Project: e.name, Platform: msg.Platform,
++		SessionKey: msg.SessionKey, UserID: msg.UserID, MessageID: msg.MessageID,
++		Args:           []string{content},
++		HasAttachments: len(msg.Images) > 0 || len(msg.Files) > 0 || msg.Location != nil || msg.Audio != nil,
++	})
++	handled, response := true, ""
++	if err == nil {
++		handled, response, err = parseConsoleRoute(output)
++	}
++	if err != nil {
++		handled, response = true, e.i18n.T(MsgConsoleUnavailable)
++	}
++	if handled {
++		e.replyConsole(p, msg.ReplyCtx, response)
++	}
++	return handled
++}
+--- /dev/null
++++ b/core/console_router_test.go
+@@ -0,0 +1,119 @@
++package core
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"os"
++	"strings"
++	"testing"
++)
++
++func TestConsoleRouterHelper(t *testing.T) {
++	if os.Getenv("CC_CONSOLE_HELPER") != "1" {
++		return
++	}
++	var in argvCommandInput
++	if json.NewDecoder(os.Stdin).Decode(&in) != nil {
++		os.Exit(2)
++	}
++	switch in.Args[0] {
++	case "fallback":
++		fmt.Print(`{"handled":false,"response":""}`)
++	case "broken":
++		fmt.Print(`{"handled":false`)
++	default:
++		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"handled": true, "response": in.Platform + "|" + in.Args[0]})
++	}
++	os.Exit(0)
++}
++
++func TestConsoleRouterAllPlatforms(t *testing.T) {
++	t.Setenv("CC_CONSOLE_HELPER", "1")
++	// Registry names in pinned upstream v1.4.1. No live accounts or models.
++	for _, platform := range []string{"feishu", "telegram", "discord", "slack", "dingtalk", "wecom", "weixin", "qq", "qqbot", "line", "weibo", "max", "matrix", "webex", "lark", "wps-xiezuo"} {
++		t.Run(platform, func(t *testing.T) {
++			e := newTestEngine()
++			e.SetAdminFrom("owner")
++			p := &stubPlatformEngine{n: platform}
++			e.AddArgvCommand(consoleRouterName, "console", []string{os.Args[0], "-test.run=^TestConsoleRouterHelper$"}, t.TempDir(), "config")
++			msg := &Message{Platform: platform, UserID: "owner", SessionKey: "session", MessageID: "message", Content: "quoted context must not override user input"}
++			text := "hello\n$(touch NEVER_CREATE)"
++			if !e.routeConsoleMessage(p, msg, text) {
++				t.Fatal("not routed")
++			}
++			if got := p.getSent(); len(got) != 1 || got[0] != platform+"|"+text {
++				t.Fatalf("changed text: %v", got)
++			}
++			if e.routeConsoleMessage(p, msg, "fallback") {
++				t.Fatal("explicit fallback failed")
++			}
++			if !e.routeConsoleMessage(p, msg, "broken") {
++				t.Fatal("ambiguous fallback allowed")
++			}
++			msg.UserID = "stranger"
++			if !e.routeConsoleMessage(p, msg, "hello") {
++				t.Fatal("unauthorized message reached agent")
++			}
++		})
++	}
++}
++
++func TestConsoleRouteStrictFallback(t *testing.T) {
++	for _, s := range []string{`{}`, `null`, `{"handled":true}`, `{"handled":false,"response":"sent"}`, `{"handled":false} trailing`} {
++		if _, _, err := parseConsoleRoute(s); err == nil {
++			t.Fatal("accepted ambiguous response")
++		}
++	}
++}
++
++func TestConsoleLongReplyAndMissingIdentity(t *testing.T) {
++	e := newTestEngine()
++	p := &stubPlatformEngine{n: "telegram"}
++	text := strings.Repeat("中文🙂", 3500) + "END"
++	e.replyConsole(p, nil, text)
++	if strings.Join(p.getSent(), "") != text {
++		t.Fatal("lost reply body")
++	}
++	for _, part := range p.getSent() {
++		if len([]rune(part)) > 1000 {
++			t.Fatal("chunk too large")
++		}
++	}
++	e.SetAdminFrom("owner")
++	e.AddArgvCommand(consoleRouterName, "console", []string{"DO_NOT_EXECUTE"}, t.TempDir(), "config")
++	for _, msg := range []*Message{
++		{Platform: "telegram", UserID: "owner", SessionKey: "s"},
++		{Platform: "feishu", UserID: "owner", SessionKey: "s", MessageID: "m"},
++	} {
++		if !e.routeConsoleMessage(p, msg, "hello") {
++			t.Fatal("invalid identity fell back")
++		}
++	}
++	if e.routeConsoleMessage(p, &Message{}, "/whoami") {
++		t.Fatal("intercepted upstream command")
++	}
++}
++
++type consoleFailPlatform struct {
++	*stubPlatformEngine
++	count int
++}
++
++func (p *consoleFailPlatform) Reply(ctx context.Context, r any, text string) error {
++	p.count++
++	if p.count == 2 {
++		return errors.New("synthetic delivery failure")
++	}
++	return p.stubPlatformEngine.Reply(ctx, r, text)
++}
++func TestConsoleChunkFailureDoesNotResend(t *testing.T) {
++	e := newTestEngine()
++	p := &consoleFailPlatform{stubPlatformEngine: &stubPlatformEngine{n: "telegram"}}
++	e.replyConsole(p, nil, strings.Repeat("a", 3000))
++	got := p.getSent()
++	if p.count != 3 || len(got) != 2 || !strings.Contains(got[1], "1/3 chunks confirmed") {
++		t.Fatal("delivery failure not explicit")
++	}
++}
+--- a/core/engine.go
++++ b/core/engine.go
+@@ -1070,6 +1070,11 @@
+ 	e.commands.Add(name, description, prompt, exec, workDir, source)
+ }
+ 
++// AddArgvCommand registers an administrator-only, shell-free external command.
++func (e *Engine) AddArgvCommand(name, description string, argv []string, workDir, source string) {
++	e.commands.AddArgv(name, description, argv, workDir, source)
++}
++
+ // ClearCommands removes all commands from the given source.
+ func (e *Engine) ClearCommands(source string) {
+ 	e.commands.ClearSource(source)
+@@ -2798,6 +2803,13 @@
+ 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgBannedWordBlocked))
+ 			return
+ 		}
++	}
++
++	// Optional administrator-configured desktop console route. Run before the
++	// ordinary agent's workspace/session queue so selected desktop tasks keep
++	// their own context and lifecycle. Aliases and slash commands bypass it.
++	if e.routeConsoleMessage(p, msg, content) {
++		return
+ 	}
+ 
+ 	// Multi-workspace resolution
+@@ -13301,6 +13313,8 @@
+ 			tag = e.i18n.T(MsgCommandsTagAgent)
+ 		} else if c.Exec != "" {
+ 			tag = e.i18n.T(MsgCommandsTagShell)
++		} else if len(c.Argv) > 0 {
++			tag = e.i18n.T(MsgCommandsTagProgram)
+ 		}
+ 		desc := c.Description
+ 		if desc == "" {
+@@ -14212,8 +14226,12 @@
+ // ──────────────────────────────────────────────────────────────
+ 
+ func (e *Engine) executeCustomCommand(p Platform, msg *Message, cmd *CustomCommand, args []string) {
+-	if cmd.Exec != "" && !e.isAdmin(msg.UserID) {
++	if (cmd.Exec != "" || len(cmd.Argv) > 0) && !e.isAdmin(msg.UserID) {
+ 		e.reply(p, msg.ReplyCtx, fmt.Sprintf(e.i18n.T(MsgAdminRequired), "/"+cmd.Name))
++		return
++	}
++	if len(cmd.Argv) > 0 {
++		go e.executeArgvCommand(p, msg, cmd, args)
+ 		return
+ 	}
+ 	// If this is an exec command, run shell command directly
+@@ -14324,6 +14342,8 @@
+ 			tag = " [agent]"
+ 		} else if c.Exec != "" {
+ 			tag = " [shell]"
++		} else if len(c.Argv) > 0 {
++			tag = e.i18n.T(MsgCommandsTagProgram)
+ 		}
+ 		sb.WriteString(fmt.Sprintf("/%s%s\n", c.Name, tag))
+ 
+--- a/core/i18n.go
++++ b/core/i18n.go
+@@ -378,31 +378,32 @@
+ 	MsgCronIDLabel               MsgKey = "cron_id_label"
+ 	MsgCronFailedSuffix          MsgKey = "cron_failed_suffix"
+ 
+-	MsgTimerNotAvailable  MsgKey = "timer_not_available"
+-	MsgTimerUsage         MsgKey = "timer_usage"
+-	MsgTimerAddUsage      MsgKey = "timer_add_usage"
+-	MsgTimerAdded         MsgKey = "timer_added"
+-	MsgTimerAddedExec     MsgKey = "timer_added_exec"
+-	MsgTimerAddExecUsage  MsgKey = "timer_addexec_usage"
+-	MsgTimerEmpty         MsgKey = "timer_empty"
+-	MsgTimerListTitle     MsgKey = "timer_list_title"
+-	MsgTimerListFooter    MsgKey = "timer_list_footer"
+-	MsgTimerDelUsage      MsgKey = "timer_del_usage"
+-	MsgTimerMuteUsage     MsgKey = "timer_mute_usage"
+-	MsgTimerDeleted       MsgKey = "timer_deleted"
+-	MsgTimerNotFound      MsgKey = "timer_not_found"
+-	MsgTimerMuted         MsgKey = "timer_muted"
+-	MsgTimerUnmuted       MsgKey = "timer_unmuted"
+-	MsgTimerCardHint      MsgKey = "timer_card_hint"
+-	MsgTimerBtnMute       MsgKey = "timer_btn_mute"
+-	MsgTimerBtnUnmute     MsgKey = "timer_btn_unmute"
+-	MsgTimerBtnDelete     MsgKey = "timer_btn_delete"
+-	MsgTimerIDLabel       MsgKey = "timer_id_label"
+-	MsgTimerScheduledLabel MsgKey = "timer_scheduled_label"
+-	MsgTimerFailedSuffix  MsgKey = "timer_failed_suffix"
+-	MsgCommandsTagAgent          MsgKey = "commands_tag_agent"
+-	MsgCommandsTagShell          MsgKey = "commands_tag_shell"
+-	MsgUpgradeTimeoutSuffix      MsgKey = "upgrade_timeout_suffix"
++	MsgTimerNotAvailable    MsgKey = "timer_not_available"
++	MsgTimerUsage           MsgKey = "timer_usage"
++	MsgTimerAddUsage        MsgKey = "timer_add_usage"
++	MsgTimerAdded           MsgKey = "timer_added"
++	MsgTimerAddedExec       MsgKey = "timer_added_exec"
++	MsgTimerAddExecUsage    MsgKey = "timer_addexec_usage"
++	MsgTimerEmpty           MsgKey = "timer_empty"
++	MsgTimerListTitle       MsgKey = "timer_list_title"
++	MsgTimerListFooter      MsgKey = "timer_list_footer"
++	MsgTimerDelUsage        MsgKey = "timer_del_usage"
++	MsgTimerMuteUsage       MsgKey = "timer_mute_usage"
++	MsgTimerDeleted         MsgKey = "timer_deleted"
++	MsgTimerNotFound        MsgKey = "timer_not_found"
++	MsgTimerMuted           MsgKey = "timer_muted"
++	MsgTimerUnmuted         MsgKey = "timer_unmuted"
++	MsgTimerCardHint        MsgKey = "timer_card_hint"
++	MsgTimerBtnMute         MsgKey = "timer_btn_mute"
++	MsgTimerBtnUnmute       MsgKey = "timer_btn_unmute"
++	MsgTimerBtnDelete       MsgKey = "timer_btn_delete"
++	MsgTimerIDLabel         MsgKey = "timer_id_label"
++	MsgTimerScheduledLabel  MsgKey = "timer_scheduled_label"
++	MsgTimerFailedSuffix    MsgKey = "timer_failed_suffix"
++	MsgCommandsTagAgent     MsgKey = "commands_tag_agent"
++	MsgCommandsTagShell     MsgKey = "commands_tag_shell"
++	MsgCommandsTagProgram   MsgKey = "commands_tag_program"
++	MsgUpgradeTimeoutSuffix MsgKey = "upgrade_timeout_suffix"
+ 
+ 	MsgCronScheduleLabel MsgKey = "cron_schedule_label"
+ 	MsgCronNextRunLabel  MsgKey = "cron_next_run_label"
+@@ -648,7 +649,34 @@
+ 	MsgBackgroundAutoDenied     MsgKey = "background_auto_denied"
+ )
+ 
++const (
++	MsgConsoleDenied      MsgKey = "console_denied"
++	MsgConsoleUnavailable MsgKey = "console_unavailable"
++	MsgConsoleIncomplete  MsgKey = "console_incomplete"
++)
++
+ var messages = map[MsgKey]map[Language]string{
++	MsgConsoleDenied: {
++		LangEnglish:            "Console access denied: a trusted, authorized message identity is required.",
++		LangChinese:            "控制台访问被拒绝：需要可信且已授权的消息身份。",
++		LangTraditionalChinese: "控制台存取被拒絕：需要可信且已授權的訊息身分。",
++		LangJapanese:           "コンソールへのアクセスが拒否されました。認証済みのメッセージが必要です。",
++		LangSpanish:            "Acceso denegado: se requiere una identidad de mensaje autorizada.",
++	},
++	MsgConsoleUnavailable: {
++		LangEnglish:            "Console route unavailable; message was not passed to the default assistant. Check the original task before retrying.",
++		LangChinese:            "控制台入口暂不可用，本条未转发到默认助手；重试前请先核对原任务。",
++		LangTraditionalChinese: "控制台入口暫不可用，本則未轉發到預設助手；重試前請先核對原任務。",
++		LangJapanese:           "コンソール経路を利用できません。再試行前に元のタスクを確認してください。",
++		LangSpanish:            "Ruta no disponible; el mensaje no se envió al asistente predeterminado. Comprueba la tarea antes de reintentar.",
++	},
++	MsgConsoleIncomplete: {
++		LangEnglish:            "Console delivery incomplete (%d/%d chunks confirmed). Open the web console to read the full result.",
++		LangChinese:            "结果发送未完成（已确认 %d/%d 段）。请打开网页控制台查看完整结果。",
++		LangTraditionalChinese: "結果傳送未完成（已確認 %d/%d 段）。請開啟網頁控制台查看完整結果。",
++		LangJapanese:           "配信が未完了です（確認済み %d/%d）。Web コンソールで全文を確認してください。",
++		LangSpanish:            "Entrega incompleta (%d/%d partes confirmadas). Abre la consola web para leer el resultado completo.",
++	},
+ 	MsgStarting: {
+ 		LangEnglish:            "⏳ Processing...",
+ 		LangChinese:            "⏳ 处理中...",
+@@ -2639,6 +2667,10 @@
+ 		LangEnglish: " [shell]", LangChinese: " [终端]", LangTraditionalChinese: " [終端]",
+ 		LangJapanese: " [シェル]", LangSpanish: " [shell]",
+ 	},
++	MsgCommandsTagProgram: {
++		LangEnglish: " [program]", LangChinese: " [程序]", LangTraditionalChinese: " [程式]",
++		LangJapanese: " [プログラム]", LangSpanish: " [programa]",
++	},
+ 	MsgUpgradeTimeoutSuffix: {
+ 		LangEnglish: " (timeout)", LangChinese: "（超时）", LangTraditionalChinese: "（逾時）",
+ 		LangJapanese: "（タイムアウト）", LangSpanish: " (tiempo de espera agotado)",
+--- /dev/null
++++ b/core/listen_host.go
+@@ -0,0 +1,12 @@
++package core
++
++import "strings"
++
++// localListenHost keeps management surfaces local unless explicitly configured.
++func localListenHost(host string) string {
++	host = strings.TrimSpace(host)
++	if host == "" {
++		return "127.0.0.1"
++	}
++	return host
++}
+--- /dev/null
++++ b/core/listen_host_test.go
+@@ -0,0 +1,46 @@
++package core
++
++import (
++	"net"
++	"testing"
++)
++
++func TestManagementAndBridge_DefaultLoopback(t *testing.T) {
++	m := NewManagementServer(0, "test-token", nil)
++	m.Start()
++	defer m.Stop()
++	b := NewBridgeServer(1, "test-token", "", nil)
++	b.port = 0 // ephemeral port; constructor normally substitutes the default
++	b.Start()
++	defer b.Stop()
++	for name, addr := range map[string]string{"management": m.server.Addr, "bridge": b.server.Addr} {
++		host, _, err := net.SplitHostPort(addr)
++		if err != nil || host != "127.0.0.1" {
++			t.Errorf("%s unexpectedly exposes non-loopback listener %q: %v", name, addr, err)
++		}
++	}
++}
++
++func TestManagementAndBridge_ExplicitListenHost(t *testing.T) {
++	for _, host := range []string{"::1", "127.0.0.2", "  "} {
++		m := NewManagementServer(0, "test-token", nil)
++		m.SetListenHost(host)
++		m.Start()
++		m.Stop()
++		b := NewBridgeServer(1, "test-token", "", nil)
++		b.port = 0
++		b.SetListenHost(host)
++		b.Start()
++		b.Stop()
++		want := host
++		if host == "  " {
++			want = "127.0.0.1"
++		}
++		for _, addr := range []string{m.server.Addr, b.server.Addr} {
++			got, _, err := net.SplitHostPort(addr)
++			if err != nil || got != want {
++				t.Errorf("host %q produced %q: %v", host, addr, err)
++			}
++		}
++	}
++}
+--- a/core/management.go
++++ b/core/management.go
+@@ -8,6 +8,7 @@
+ 	"fmt"
+ 	"io/fs"
+ 	"log/slog"
++	"net"
+ 	"net/http"
+ 	"os"
+ 	"strconv"
+@@ -35,6 +36,7 @@
+ // ManagementServer provides an HTTP REST API for external management tools
+ // (web dashboards, TUI clients, GUI desktop apps, Mac tray apps, etc.).
+ type ManagementServer struct {
++	listenHost  string
+ 	port        int
+ 	token       string
+ 	corsOrigins []string
+@@ -145,10 +147,10 @@
+ 		Model string `json:"model"`
+ 		Alias string `json:"alias,omitempty"`
+ 	} `json:"models,omitempty"`
+-	Endpoints       map[string]string              `json:"endpoints,omitempty"`
+-	AgentModels     map[string]string              `json:"agent_models,omitempty"`
+-	AgentModelLists map[string][]GlobalModelEntry   `json:"agent_model_lists,omitempty"`
+-	Codex           *GlobalCodexConfig              `json:"codex,omitempty"`
++	Endpoints       map[string]string             `json:"endpoints,omitempty"`
++	AgentModels     map[string]string             `json:"agent_models,omitempty"`
++	AgentModelLists map[string][]GlobalModelEntry `json:"agent_model_lists,omitempty"`
++	Codex           *GlobalCodexConfig            `json:"codex,omitempty"`
+ }
+ 
+ // GlobalModelEntry is a model entry inside AgentModelLists.
+@@ -200,7 +202,7 @@
+ 	handler := m.buildHandler(mux)
+ 
+ 	m.server = &http.Server{
+-		Addr:    fmt.Sprintf(":%d", m.port),
++		Addr:    net.JoinHostPort(localListenHost(m.listenHost), strconv.Itoa(m.port)),
+ 		Handler: handler,
+ 	}
+ 	go func() {
+@@ -1905,10 +1907,10 @@
+ // applying per-agent-type overrides for base_url, model, and models.
+ func resolveGlobalProviderForAgent(g GlobalProviderInfo, agentType string) ProviderConfig {
+ 	pc := ProviderConfig{
+-		Name:   g.Name,
+-		APIKey: g.APIKey,
++		Name:    g.Name,
++		APIKey:  g.APIKey,
+ 		BaseURL: g.BaseURL,
+-		Model:  g.Model,
++		Model:   g.Model,
+ 	}
+ 	if ep, ok := g.Endpoints[agentType]; ok && ep != "" {
+ 		pc.BaseURL = ep
+@@ -1994,3 +1996,8 @@
+ 	}
+ 	mgmtJSON(w, http.StatusOK, data)
+ }
++
++// SetListenHost sets the bind host before Start. Empty defaults to loopback.
++func (m *ManagementServer) SetListenHost(host string) {
++	m.listenHost = host
++}

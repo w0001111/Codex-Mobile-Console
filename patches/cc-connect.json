@@ -1,0 +1,27 @@
+{
+  "upstream_repository": "https://github.com/chenhg5/cc-connect",
+  "upstream_commit": "5d4c96dd12774574369e75b60084140101c9a59a",
+  "upstream_tag": "v1.4.1",
+  "adapter_version": "v1.4.1-console-multichannel.1",
+  "archive_url": "https://codeload.github.com/chenhg5/cc-connect/tar.gz/5d4c96dd12774574369e75b60084140101c9a59a",
+  "archive_sha256": "d1c5e329e25d411ecfb2f6c57cf7f2adac1866323265bcedb6f38bd7184f0288",
+  "patch_sha256": "5ae101f4bdd9fec2de4300b6f8bbc04684d15cb75df4177f8a8a19d230d3889d",
+  "platforms": [
+    "weixin",
+    "feishu",
+    "lark",
+    "telegram",
+    "discord",
+    "slack",
+    "dingtalk",
+    "wecom",
+    "qq",
+    "qqbot",
+    "line",
+    "weibo",
+    "max",
+    "matrix",
+    "webex",
+    "wps-xiezuo"
+  ]
+}
