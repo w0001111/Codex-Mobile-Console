@@ -56,4 +56,4 @@ cc-connect 随本项目安装脚本一起安装在 Mac，无需预先单独安�
 - [隐私说明](PRIVACY.md)：本地数据与公开发布的边界。
 - [作者说明](AUTHORS.md)与[第三方许可](THIRD_PARTY.md)。
 
-项目作者：[w0001111](https://github.com/w0001111)。采用 [MIT 许可证](LICENSE)。本项目是第三方工具，并非 OpenAI 或消息平台官方产品。
+项目作者：[w0001111](https://github.com/w0001111)。采用 [MIT 许可证](LICENSE)。本项目是第三方工具，并非 OpenAI 或消息平台官方产品。建议/合作联系方式：tsryvq@163.com
