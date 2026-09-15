@@ -80,7 +80,7 @@ python3 scripts/release_signature.py sign ../codex-mobile-console-release.zip \
 更改任何发布文件后必须重新构建 ZIP，并用新版本名重新签署。不要把旧签名套用在重新压缩的文件上。
 
 上传 GitHub 时附上 ZIP、`.zip.sig` 和公钥，将公钥指纹同时放在你控制的 GitHub 个人主页或仓库 README。
-此目录尚未自动创建或上传 GitHub 仓库。文件签名不会自动让 GitHub 提交显示 Verified；提交签名是另一个功能。
+本项目公开仓库为 [w0001111/Codex-Mobile-Console](https://github.com/w0001111/Codex-Mobile-Console)，已发布版本见 [Releases](https://github.com/w0001111/Codex-Mobile-Console/releases)。文件签名不会自动让 GitHub 提交显示 Verified；提交签名是另一个功能。
 
 ## 私钥保管与身份边界
 
