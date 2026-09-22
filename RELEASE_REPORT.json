@@ -1,71 +1,29 @@
 {
-  "version": "0.2.0-rc.7",
-  "prepared_at": "2026-09-15T10:09:44.910668+00:00",
-  "status": "privacy_cleanup_release_candidate",
+  "version": "0.2.0-rc.8",
+  "prepared_at": "2026-09-22T07:58:46.415797+00:00",
+  "status": "validated_release_candidate",
   "distribution": "download_and_self_host",
-  "original_source_files_verified": 42,
+  "author": "w0001111",
+  "license": "MIT",
+  "original_source_files_verified": 99,
   "original_source_files_changed": 0,
-  "included": [
-    "console source and frontend build",
-    "pinned cc-connect source metadata and checksummed patch",
-    "automatic adapter build with installed Python integration test",
-    "platform selection and private owner binding wizard",
-    "cloud TCP relay template and local TLS/SSH configuration generator",
-    "macOS installation-scoped service installer",
-    "read-only deployment doctor",
-    "MIT license, source attribution and About page",
-    "OpenSSH release signing and independently pinned public-key verification",
-    "separate installation and usage guides with four synthetic screenshots"
+  "release_changes": [
+    "Order sessions by recent user message or final reply without opening desktop tasks.",
+    "Refresh the first eight visible task states with bounded concurrency.",
+    "Preview explicit local result images and retry or refresh artifact discovery.",
+    "Restore tab-local drafts, disclosure state and reading position; clear on logout.",
+    "Allow manual continuation after a confirmed failed or interrupted terminal turn, preserving approval guards.",
+    "Retain portable paths, configurable Codex home, multi-platform pairing, attribution and intentional public contact information."
   ],
   "checks": {
-    "fresh_directory_setup_and_cc_connect_build": "passed",
-    "python_full_regression_run": {
-      "passed": 154
-    },
-    "python_final_affected_tests_including_two_additional_tests": {
-      "passed": 39
-    },
-    "python_unique_tests_passed": 156,
-    "platform_identifiers_in_generic_route_tests": 16,
-    "real_cc_connect_engine_to_python_binding_pairing_and_password": "passed_without_platform_network_or_model_calls",
-    "cc_connect_core_and_config_full_packages_initial_run": "passed",
-    "cc_connect_platform_packages_initial_run": "all_passed",
-    "cc_connect_patch_specific_install_gate": "passed",
-    "cc_connect_CUJ_isolated_run": "passed",
-    "frontend_build": "passed in rc.7; version display rebuilt",
-    "frontend_api_contract_checks": "passed again in rc.3",
-    "npm_production_known_vulnerabilities": 0,
-    "python_and_shell_syntax": "passed again in rc.3: 39 Python files, 5 shell scripts",
-    "caddy_generated_web_line_wecom_configs": "adapted_and_loopback_listeners_verified",
-    "prior_runtime_validation": "Runtime test results above retained from rc.1; rc.3 adds About UI, attribution and release tools.",
-    "release_signing_positive_and_negative_tests": {
-      "passed": 10
-    },
-    "about_page_desktop_and_mobile": {
-      "status": "passed",
-      "browser": "Playwright Chromium (existing local browser executable)",
-      "viewports": [
-        "1280x900",
-        "390x844"
-      ],
-      "coverage": [
-        "login to About and back",
-        "signed-in task list to About and back",
-        "MIT full text expansion",
-        "release fingerprint expansion",
-        "no horizontal overflow",
-        "correct title and content",
-        "no framework error overlay",
-        "no unexpected console warnings or errors"
-      ],
-      "data": "synthetic API fixtures; no production or desktop task calls"
-    },
-    "documentation_internal_links": {
-      "passed": 30
-    },
-    "documentation_command_paths": "all referenced project script paths exist",
-    "cc_connect_installation_documentation": "install/build/start commands checked against scripts; expected version matches pinned manifest",
-    "usage_screenshot_browser_flows": {
+    "mobile_python_full_suite_passed": 210,
+    "message_activity_affected_suite_including_additional_portability_test_passed": 6,
+    "mobile_python_unique_tests_passed": 211,
+    "bridge_python_tests_passed": 68,
+    "release_signature_privacy_tests_passed": 11,
+    "frontend_build": "passed",
+    "frontend_api_contract_checks": "passed",
+    "browser_qa": {
       "status": "passed",
       "browser": "Playwright Chromium",
       "browser_fallback": "Browser plugin not available",
@@ -73,38 +31,38 @@
         "430x932",
         "1280x932"
       ],
-      "api_requests_fulfilled_with_synthetic_data": 29,
-      "unexpected_network": [],
-      "unexpected_console": [],
+      "data": "synthetic API fixtures only; no production or model calls",
       "checks": [
-        "blank login fields",
-        "homepage fixtures",
-        "open task and connect using synthetic action",
-        "expand and collapse timeline",
-        "open login history and return",
-        "no horizontal overflow",
-        "DOM private-value scan"
-      ]
+        "blank login screenshot",
+        "synthetic login and About",
+        "refresh exactly first 8 without sending",
+        "final reply first, details collapsed",
+        "draft survives navigation and reload",
+        "timeline newest first and reading position restored",
+        "login history",
+        "image retry and fresh artifact request",
+        "failed terminal task manual send once; model switch blocked",
+        "pending confirmation cannot send",
+        "desktop detail and About",
+        "logout clears tab state",
+        "new session isolated from old draft"
+      ],
+      "api_requests": 66,
+      "unexpected_network": [],
+      "unexpected_console": []
     },
-    "screenshot_packaging_integrity_checks": {
-      "passed": 10
-    },
-    "screenshot_visual_review": "four synthetic screenshots inspected; no actual user data present; not OCR",
-    "privacy_cleanup_regression": {
-      "mobile_python_tests_passed": 192,
-      "bridge_python_tests_passed": 68,
-      "release_signature_and_privacy_tests_passed": 11,
-      "frontend_build": "passed",
-      "frontend_api_contract_checks": "passed",
-      "runtime_behavior_changes": false
-    }
+    "screenshot_visual_review": "All four synthetic screenshots inspected; blank credentials, fictional tasks and login records; no actual user data. This is visual inspection, not OCR."
   },
-  "upstream_test_observations": [
-    "The first all-package Go run failed in two asynchronous model/cache tests and one release_local engine temporary-directory cleanup test; it is not reported as a clean full-suite pass.",
-    "Both model/cache tests passed when rerun in isolation on both unchanged upstream and the candidate.",
-    "The release_local engine cleanup failure also reproduced on unchanged upstream.",
-    "A combined CUJ run later hit an image-test temporary-directory cleanup failure; the separate CUJ run passed. No tests were removed or weakened to hide these results."
-  ],
+  "historical_validation": {
+    "release": "0.2.0-rc.7",
+    "scope": "The existing pinned cc-connect adapter and deployment scripts are unchanged. Earlier fresh-install/build and upstream package results are historical and were not rerun for rc.8.",
+    "upstream_test_observations": [
+      "The first all-package Go run failed in two asynchronous model/cache tests and one release_local engine temporary-directory cleanup test; it is not reported as a clean full-suite pass.",
+      "Both model/cache tests passed when rerun in isolation on both unchanged upstream and the candidate.",
+      "The release_local engine cleanup failure also reproduced on unchanged upstream.",
+      "A combined CUJ run later hit an image-test temporary-directory cleanup failure; the separate CUJ run passed. No tests were removed or weakened to hide these results."
+    ]
+  },
   "limitations": [
     "Real-account round trips have not been exercised for every messaging platform.",
     "Each operator must create their own bot, obtain platform permissions, and verify their own HTTPS/DNS/SSH relay.",
@@ -112,7 +70,6 @@
     "Codex desktop internal IPC compatibility must be rechecked after desktop upgrades.",
     "This is single-owner self-hosting, not public multi-tenant registration.",
     "ChatGPT original-chat integration is not implemented.",
-    "GitHub repository destination not yet selected or published; author profile fingerprint publication remains an operator step.",
     "Release signature establishes key provenance, not legal identity, originality, vulnerability-free code or live-server verification."
   ],
   "private_data_excluded": [
@@ -125,18 +82,5 @@
     "downloaded source and dependencies",
     "compiled binaries",
     "Git history"
-  ],
-  "revision_notes": [
-    "README is now a short entry page linking INSTALL and USAGE. All cc-connect installation instructions remain in INSTALL.",
-    "Added four screenshots of the real frontend with blank credentials and synthetic projects, conversations, quota and login events. No production backend or desktop tasks accessed.",
-    "Added a narrowly scoped screenshot package gate: fixed names, manifest hashes, PNG dimensions, CRC checks and no metadata chunks; text/private-key checks remain enabled.",
-    "Application behavior unchanged; version display rebuilt for rc.6."
-  ],
-  "author": "w0001111",
-  "license": "MIT",
-  "release_changes": [
-    "Use neutral synthetic project labels and paths in all reachable source history.",
-    "Allow private release deny-list entries with at least four characters and test validation.",
-    "Refresh release version and signed distribution; withdraw superseded affected assets."
   ]
 }

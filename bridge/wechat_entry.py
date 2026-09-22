@@ -17,7 +17,7 @@ import uuid
 from paths import ROOT, BRIDGE_STATE, CODEX_HOME
 from channel_access import valid_platform, admit
 from control import Controller, ReadOnlyAPI, clean
-from desktop_ipc import DesktopIPC, IPCError, ensure_idle, latest_result
+from desktop_ipc import DesktopIPC, IPCError, ensure_idle, ensure_can_send, latest_result
 
 HELP = '''消息平台任务菜单
 界面：打开手机任务管理页，查看进度与切换任务
@@ -317,7 +317,7 @@ class Entry:
             except BlockingIOError:return '该会话正在处理另一条发送请求，本条未发送。'
             with self.ipc_factory() as ipc:
                 owner,state=ipc.connect_thread(tid,open_if_needed=True)
-                ensure_idle(state)
+                ensure_can_send(state)
                 # Commit BEFORE IPC mutation: crash/timeout cannot replay this message.
                 with self.db:
                     cur=self.db.execute('INSERT OR IGNORE INTO sends VALUES (?,?,?,?,?,?,?,?)',

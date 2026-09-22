@@ -18,7 +18,7 @@ from ui_state import UIState
 
 MAX_FILE=32*1024*1024
 MAX_CACHE=512*1024*1024
-EXTENSIONS={'.pdf','.docx','.xlsx','.pptx','.csv','.txt','.md','.tex','.png','.jpg','.jpeg','.webp'}
+EXTENSIONS={'.pdf','.docx','.xlsx','.pptx','.csv','.txt','.md','.tex','.png','.jpg','.jpeg','.webp','.gif'}
 SENSITIVE=re.compile(r'password|passwd|secret|credential|token|id_rsa|id_ed25519|authorized_keys|known_hosts',re.I)
 
 def output_references(turn,cwd):
@@ -42,7 +42,10 @@ def output_references(turn,cwd):
             if fields.get('purpose')=='output' and isinstance(fields.get('path'),str):paths.append(fields['path'])
         for match in re.finditer(r'\[[^\]]*\]\((?:<([^>]+)>|([^\)]+))\)',text):
             path=unquote(match[1] or match[2]);path=re.sub(r':\d+$','',path)
-            if path in written:paths.append(path)
+            # An explicit inline image is a request to display that local output.
+            # Ordinary file links still need a completed file-change proof.
+            embedded=match.start()>0 and text[match.start()-1]=='!'
+            if path in written or (embedded and Path(path).suffix.lower() in ('.png','.jpg','.jpeg','.webp','.gif')):paths.append(path)
         for path in dict.fromkeys(paths):refs.append({'path':path,'turnId':turn.get('turnId') or turn.get('id') or '', 'messageId':item.get('id') or hashlib.sha256(text.encode()).hexdigest()})
     return refs
 
@@ -75,6 +78,7 @@ def image_type(name,data):
     if ext=='.png' and data.startswith(b'\x89PNG\r\n\x1a\n'):return 'image/png'
     if ext in ('.jpg','.jpeg') and data.startswith(b'\xff\xd8\xff'):return 'image/jpeg'
     if ext=='.webp' and data[:4]==b'RIFF' and data[8:12]==b'WEBP':return 'image/webp'
+    if ext=='.gif' and data[:6] in (b'GIF87a',b'GIF89a'):return 'image/gif'
     return None
 
 class ArtifactStore(UIState):
@@ -82,13 +86,16 @@ class ArtifactStore(UIState):
         db=super().connect()
         db.execute('''CREATE TABLE IF NOT EXISTS artifacts (id TEXT PRIMARY KEY, actor TEXT, thread TEXT, proof TEXT,
           name TEXT, size INTEGER, digest TEXT, created REAL, UNIQUE(actor,thread,proof))''')
+        db.execute('CREATE TABLE IF NOT EXISTS artifact_sources (id TEXT PRIMARY KEY, path TEXT)')
         return db
     def capture(self,actor,tid,cwd,reference):
         p=allowed_path(reference['path'],cwd)
         proof=hashlib.sha256(json.dumps([reference['turnId'],reference['messageId'],str(p)]).encode()).hexdigest()
         with contextlib.closing(self.connect()) as db:
             old=db.execute('SELECT id FROM artifacts WHERE actor=? AND thread=? AND proof=?',(actor,tid,proof)).fetchone()
-            if old:return old[0]
+            if old:
+                with db:db.execute('INSERT OR IGNORE INTO artifact_sources VALUES (?,?)',(old[0],str(p)))
+                return old[0]
             used=db.execute('SELECT COALESCE(SUM(size),0) FROM artifacts').fetchone()[0]
         fd=secure_open(p)
         try:
@@ -110,6 +117,7 @@ class ArtifactStore(UIState):
                 if db.execute('SELECT COALESCE(SUM(size),0) FROM artifacts').fetchone()[0]+len(data)>MAX_CACHE:raise ValueError('成果缓存已满，请在桌面查看')
                 db.execute('INSERT OR IGNORE INTO artifacts VALUES (?,?,?,?,?,?,?,?)',(aid,actor,tid,proof,p.name,len(data),hashlib.sha256(data).hexdigest(),time.time()))
                 actual=db.execute('SELECT id FROM artifacts WHERE actor=? AND thread=? AND proof=?',(actor,tid,proof)).fetchone()[0]
+                db.execute('INSERT OR IGNORE INTO artifact_sources VALUES (?,?)',(actual,str(p)))
             if actual!=aid:target.unlink()
             return actual
         except Exception:
@@ -123,7 +131,7 @@ class ArtifactStore(UIState):
         return skipped
     def listing(self,actor,tid):
         with contextlib.closing(self.connect()) as db:
-            return [{'id':a,'name':n,'size':s,'capturedAt':t,'image':Path(n).suffix.lower() in ('.png','.jpg','.jpeg','.webp')} for a,n,s,t in db.execute('SELECT id,name,size,created FROM artifacts WHERE actor=? AND thread=? ORDER BY created DESC',(actor,tid))]
+            return [{'id':a,'name':n,'size':s,'capturedAt':t,'sourcePath':p,'image':Path(n).suffix.lower() in ('.png','.jpg','.jpeg','.webp','.gif')} for a,n,s,t,p in db.execute('SELECT a.id,a.name,a.size,a.created,s.path FROM artifacts a LEFT JOIN artifact_sources s ON a.id=s.id WHERE a.actor=? AND a.thread=? ORDER BY a.created DESC',(actor,tid))]
     def read(self,actor,tid,aid):
         with contextlib.closing(self.connect()) as db:row=db.execute('SELECT name,size,digest FROM artifacts WHERE id=? AND actor=? AND thread=?',(aid,actor,tid)).fetchone()
         if not row:raise FileNotFoundError()

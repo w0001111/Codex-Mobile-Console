@@ -4,7 +4,14 @@
 
 通过手机网页或微信、飞书、Telegram 等消息软件，管理你 Mac 上已有的 Codex 任务。
 
-[下载 v0.2.0-rc.7（预发布版）](https://github.com/w0001111/Codex-Mobile-Console/releases/tag/v0.2.0-rc.7) · [安装说明](INSTALL.md) · [使用说明与截图](USAGE.md)
+[下载 v0.2.0-rc.8（预发布版）](https://github.com/w0001111/Codex-Mobile-Console/releases/tag/v0.2.0-rc.8) · [安装说明](INSTALL.md) · [使用说明与截图](USAGE.md)
+
+## 这次更新
+
+- 按最近发送／回复找会话，首页显示状态刷新进度。
+- 支持回复内图片预览、图片重试和成果刷新。
+- 保留本标签页的草稿、阅读位置与展开状态。
+- 已结束的失败轮次可手动继续发送，仍保留桌面确认限制。
 
 ## 界面展示
 

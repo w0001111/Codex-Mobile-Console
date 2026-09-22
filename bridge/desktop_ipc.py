@@ -187,6 +187,22 @@ def ensure_idle(state):
     if any(t.get('status') == 'inProgress' for t in turns(state)):
         raise IPCError('thread-not-idle')
 
+def ensure_can_send(state):
+    """A terminal failed turn may leave the desktop in a recoverable error state.
+
+    Keep ensure_idle strict for settings/other mutations. Only a new user message
+    can use this recovery path; no state mutation or automatic retry occurs here.
+    """
+    if state.get('threadRuntimeStatus', {}).get('type') != 'systemError':
+        return ensure_idle(state)
+    if state.get('requests') or state.get('threadGoalResumeConfirmation'):
+        raise IPCError('thread-needs-user-input')
+    history = turns(state)
+    if not history or history[-1].get('status') not in ('failed', 'interrupted'):
+        raise IPCError('thread-not-idle')
+    if any(t.get('status') == 'inProgress' for t in history):
+        raise IPCError('thread-not-idle')
+
 if __name__ == '__main__':
     import sys
     with DesktopIPC() as client:

@@ -62,6 +62,22 @@ class FeatureTests(unittest.TestCase):
    r=a.listing(ENV,group='p',status='active');self.assertEqual(len(r['tasks']),1)
    r=a.listing(ENV,group='missing');self.assertEqual(r['overview']['total'],0);self.assertEqual(r['overview']['active'],0)
   a.pool.shutdown()
+ def test_recent_sort_is_global_before_pagination_with_pins_first(self):
+  org=self.root/'recent-org.json';org.write_text(json.dumps({'local-projects':{'p':{'name':'项目','rootPaths':['/work/demo-project']}}}))
+  a=Adapter(self.root,org);threads=[{'id':str(uuid.uuid4()),'name':'任务'+str(n),'cwd':'/work/demo-project','updatedAt':n} for n in range(40)]
+  actor=identity_key(ENV);a.preferences.update(actor,threads[0]['id'],'pin',True)
+  for i,t in enumerate(threads):a.cache[t['id']]={'status':'error' if i==1 else 'idle','statusLabel':'状态','observedAt':__import__('time').time(),'live':True,'resultRevision':''}
+  realEntry=Entry
+  try:
+   with patch('adapter.Entry',lambda:realEntry(state_dir=self.root/'entry')),patch.object(a,'catalog',return_value=(threads,True)),patch.object(a,'schedule_scan') as scan,patch.object(a,'schedule_live_refresh'):
+    recent=a.listing(ENV,sort='recent',limit=8)
+    expected=[threads[0]['id']]+[t['id'] for t in reversed(threads[33:])]
+    self.assertEqual([t['threadId'] for t in recent['tasks']],expected)
+    self.assertEqual({t['id'] for t in scan.call_args.args[0]},set(expected))
+    page=a.listing(ENV,sort='recent',limit=8,cursor=recent['nextCursor'])
+    self.assertEqual([t['threadId'] for t in page['tasks']],[t['id'] for t in reversed(threads[25:33])])
+    self.assertEqual(a.listing(ENV)['tasks'][0]['threadId'],threads[1]['id'])
+  finally:a.pool.shutdown()
  def test_history_cursor_cannot_cross_thread(self):
   a=Adapter(self.root);tid=str(uuid.uuid4());actor=identity_key(ENV)
   with contextlib.closing(Entry(state_dir=self.root/'entry')) as e:

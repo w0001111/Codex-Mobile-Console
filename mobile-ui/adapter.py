@@ -16,7 +16,7 @@ ENTRY_DIR=Path(__file__).resolve().parent.parent/'bridge'
 sys.path.insert(0,str(ENTRY_DIR))
 from paths import BRIDGE_STATE
 from wechat_entry import Entry,identity,clean,target,check_saved
-from desktop_ipc import DesktopIPC,IPCError,ensure_idle,latest_result,turns
+from desktop_ipc import DesktopIPC,IPCError,ensure_idle,ensure_can_send,latest_result,turns
 from mobile_reads import StatusIPC,ConnectIPC,ReadJobs
 
 
@@ -35,12 +35,14 @@ class Adapter:
         from model_settings import ModelCatalog,SettingsStore
         from desktop_catalog import STATE
         from quota import Quota
+        from message_activity import MessageActivity
         self.quota_reader=Quota()
         self.history_jobs=ReadJobs();self.file_jobs=ReadJobs(capacity=1,max_entries=32)
         self.cache={};self.lock=threading.Lock();self.pool=ThreadPoolExecutor(max_workers=4)
         self.index_lock=threading.Lock();self.index=None;self.index_at=0;self.index_complete=False;self.scan_at=0;self.scanning=False;self.hot_at=0;self.hot_scanning=False
         self.preferences=UIState(state or BRIDGE_STATE.parent);self.organization_path=organization_path or STATE
         self.receipts=DeliveryStore(self.preferences.directory);self.artifacts=ArtifactStore(self.preferences.directory)
+        self.message_activity=MessageActivity(self.preferences.directory)
         self.models=ModelCatalog();self.model_changes=SettingsStore(self.preferences.directory)
     def current(self,env):
         actor=identity_key(env)
@@ -77,10 +79,10 @@ class Adapter:
             finally:
                 with self.lock:self.scanning=False
         threading.Thread(target=scan,daemon=True).start()
-    def schedule_live_refresh(self):
+    def schedule_live_refresh(self,thread_ids=None):
         with self.lock:
             if self.hot_scanning or time.time()-self.hot_at<14:return
-            ids=[tid for tid,state in self.cache.items() if state.get('live')]
+            ids=[tid for tid,state in self.cache.items() if state.get('live') and (thread_ids is None or tid in thread_ids)]
             if not ids:return
             self.hot_scanning=True;self.hot_at=time.time()
         def scan():
@@ -90,12 +92,13 @@ class Adapter:
             finally:
                 with self.lock:self.hot_scanning=False
         threading.Thread(target=scan,daemon=True).start()
-    def listing(self,env,query='',cursor=None,group='all',status='all',limit=24):
+    def listing(self,env,query='',cursor=None,group='all',status='all',limit=24,sort='priority'):
         from desktop_catalog import organization,project_for
         actor=identity_key(env);threads,complete=self.catalog()
         try:org=organization(self.organization_path);org_error=False
         except (OSError,ValueError,TypeError):
             org={'groups':[],'assignments':{},'projectless':set(),'pinnedThreads':set(),'hints':{}};org_error=True
+        activity=self.message_activity.listing(t['id'] for t in threads) if sort=='message' else {}
         groups=[{k:g[k] for k in ('id','name','pinned')} for g in org['groups']]
         items=[]
         with contextlib.closing(Entry()) as entry:
@@ -109,8 +112,9 @@ class Adapter:
                     if g['id'] not in {x['id'] for x in groups}:groups.append({k:g[k] for k in ('id','name','pinned')})
                     item=self.item(entry,actor,n,title,cwd,env.get('web_account',False))
                     item.update(threadId=tid,originalTitle=clean(title,300),project=clean(g['name'],80),groupId=g['id'],desktopPinned=tid in org['pinnedThreads'],updatedAt=t.get('updatedAt',0))
+                    item.update(activity.get(tid,{'messageAt':0,'messageKind':''}))
                     with self.lock:observed=dict(self.cache.get(tid,{}))
-                    if not observed:observed={'status':'unknown','statusLabel':'待检查','feedback':'正在检查桌面状态','canSend':False,'observedAt':0,'live':False,'resultRevision':''}
+                    if not observed:observed={'status':'unknown','statusLabel':'待检查','feedback':'正在检查桌面状态','canSend':False,'canChangeModel':False,'sendBlockedReason':'请先连接会话并刷新状态','observedAt':0,'live':False,'resultRevision':''}
                     item.update({k:observed.get(k) for k in ('status','statusLabel','feedback','observedAt','canSend','live','resultRevision','modelSettings')})
                     if item['observedAt'] and time.time()-item['observedAt']>90:
                         item.update(status='unknown',statusLabel='状态待刷新',canSend=False,live=False)
@@ -122,10 +126,15 @@ class Adapter:
         term=query.casefold()
         filtered=[t for t in items if (group=='all' or t['groupId']==group) and (not term or term in (t['title']+' '+t['originalTitle']+' '+t['project']).casefold())
             and (status=='all' or status=='new' and t['newResult'] or status=='needs_input' and t['status'] in ('needs_input','error') or t['status']==status)]
-        filtered.sort(key=lambda t:(t['status'] not in ('needs_input','error'),not t['newResult'],not t['pinned'],-t['updatedAt']))
+        if sort=='message':filtered.sort(key=lambda t:(-(t['messageAt'] or 0),t['threadId']))
+        elif sort=='recent':filtered.sort(key=lambda t:(not t['pinned'],-(t['updatedAt'] or 0),t['number']))
+        else:filtered.sort(key=lambda t:(t['status'] not in ('needs_input','error'),not t['newResult'],not t['pinned'],-t['updatedAt']))
         offset=int(cursor or 0)
-        self.schedule_scan(threads)
-        self.schedule_live_refresh()
+        # New clients only need a quick status pass for the leading tasks.
+        leading={t['threadId'] for t in filtered[offset:offset+min(limit,8)]}
+        self.schedule_scan([t for t in threads if t['id'] in leading] if sort in ('recent','message') else threads)
+        if sort in ('recent','message'):self.schedule_live_refresh(leading)
+        else:self.schedule_live_refresh()
         return {'tasks':filtered[offset:offset+limit],'nextCursor':str(offset+limit) if offset+limit<len(filtered) else None,'current':self.current(env),
                 'overview':counts,'groups':groups,'groupSyncError':org_error,'matchingCount':len(filtered),'observedAt':time.time()}
     def observe(self,tid,fresh=True):
@@ -136,7 +145,7 @@ class Adapter:
         with self.lock:
             cached=self.cache.get(tid)
             if not fresh and cached and now-cached['observedAt']<12:return dict(cached)
-        result={'status':'unknown','statusLabel':'桌面未连接','feedback':'点开任务查看已保存的回复','result':'','canSend':False,'observedAt':now,'live':False,'resultRevision':'','recentTurns':[],'turnReceipts':[],'modelSettings':None}
+        result={'status':'unknown','statusLabel':'桌面未连接','feedback':'点开任务查看已保存的回复','result':'','canSend':False,'canChangeModel':False,'sendBlockedReason':'请先连接会话并刷新状态','observedAt':now,'live':False,'resultRevision':'','recentTurns':[],'turnReceipts':[],'modelSettings':None}
         try:
             check_saved(tid)
             with StatusIPC(timeout=3 if fresh else 1) as ipc:
@@ -145,15 +154,21 @@ class Adapter:
                 state=ipc.snapshot(tid,owner)
             turn,text=latest_result(state);runtime=state.get('threadRuntimeStatus',{}).get('type','unknown');ts=(turn or {}).get('status')
             status='active' if runtime=='active' or ts=='inProgress' else 'idle' if runtime=='idle' else 'unknown'
+            if status!='active' and (runtime=='systemError' or ts=='failed'):status='error'
             if state.get('requests') or state.get('threadGoalResumeConfirmation'):status='needs_input'
-            if runtime=='systemError' or ts=='failed':status='error'
             label={'active':'运行中','idle':'已完成' if ts=='completed' else '可继续','unknown':'状态未知','needs_input':'待确认','error':'出错'}[status]
             messages=[x.get('text') for x in (turn or {}).get('items',[]) if x.get('type')=='agentMessage' and x.get('text')]
-            can_send=True
+            can_send=True;blocked=''
+            try:ensure_can_send(state)
+            except IPCError as err:
+                can_send=False
+                blocked='请先在桌面完成确认' if str(err)=='thread-needs-user-input' else '运行中暂不能发送' if status=='active' else '尚未确认任务已结束，请刷新或在桌面查看'
+            can_change_model=True
             try:ensure_idle(state)
-            except IPCError:can_send=False
+            except IPCError:can_change_model=False
+            if status=='error' and can_send:label='上轮失败，可继续'
             result.update(status=status,statusLabel=label,feedback=clean(messages[-1],1200) if messages else '本轮尚无文字反馈',
-                result=clean(text,18000),canSend=can_send,live=True,resultRevision=final_revision(turns(state)),recentTurns=turns(state)[-3:],turnReceipts=turn_receipts(turns(state)),modelSettings=current_settings(state))
+                result=clean(text,18000),canSend=can_send,canChangeModel=can_change_model,sendBlockedReason=blocked,live=True,resultRevision=final_revision(turns(state)),recentTurns=turns(state)[-3:],turnReceipts=turn_receipts(turns(state)),modelSettings=current_settings(state))
         except (IPCError,OSError,ValueError):pass
         with self.lock:
             if len(self.cache)>3000:self.cache.clear()
@@ -193,8 +208,9 @@ class Adapter:
     def history(self,env,n,cursor=None):
         key=self.read_key(env,n,cursor)
         return self.history_jobs.poll(key,lambda:self.timeline(env,n,cursor,include_files=False),ttl=120 if cursor else 6)
-    def file_page(self,env,n,cursor=None):
+    def file_page(self,env,n,cursor=None,refresh=None):
         key=self.read_key(env,n,cursor)
+        if refresh:key=(*key,refresh)
         return self.file_jobs.poll(key,lambda:self.files(env,n,cursor),ttl=120)
     def detail(self,env,n,summary=False):
         from desktop_catalog import organization,project_for

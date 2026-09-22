@@ -106,10 +106,13 @@ def create_app(adapter=None,state=auth.STATE,public_url=None,local_url=None,stat
     def tasks():
         query=request.args.get('q','');cursor=request.args.get('cursor')
         group=request.args.get('group','all');status=request.args.get('status','all')
+        sort=request.args.get('sort','priority')
+        if sort not in ('priority','recent','message'):return fail('排序无效',400)
         limit=request.args.get('limit','24')
         if not limit.isdigit() or not 1<=int(limit)<=2000:return fail('分页无效',400)
         limit=int(limit)
         if len(query)>100 or len(group)>150 or (cursor and (not cursor.isdigit() or len(cursor)>5)) or status not in ('all','active','needs_input','new'):return fail('查询无效',400)
+        if sort in ('recent','message'):return bounded(lambda:service.listing(g.identity,query,cursor,group=group,status=status,limit=limit,sort=sort))
         if group=='all' and status=='all' and limit==24:return bounded(lambda:service.listing(g.identity,query,cursor))
         return bounded(lambda:service.listing(g.identity,query,cursor,group=group,status=status,limit=limit))
     @app.get('/api/tasks/<int:number>')
@@ -159,7 +162,11 @@ def create_app(adapter=None,state=auth.STATE,public_url=None,local_url=None,stat
     def files(number):
         cursor=request.args.get('cursor')
         if not 0<number<10**9 or (cursor and len(cursor)>4000):return fail('成果查询无效',400)
-        if request.args.get('async')=='1':return bounded(lambda:service.file_page(g.identity,number,cursor))
+        refresh=request.args.get('refresh')
+        if refresh and not re.fullmatch('[0-9a-fA-F-]{36}',refresh):return fail('刷新请求无效',400)
+        if request.args.get('async')=='1':
+            if refresh:return bounded(lambda:service.file_page(g.identity,number,cursor,refresh=refresh))
+            return bounded(lambda:service.file_page(g.identity,number,cursor))
         return bounded(lambda:service.files(g.identity,number,cursor))
     @app.get('/api/tasks/<int:number>/files/<aid>')
     @app.get('/api/tasks/<int:number>/files/<aid>/preview')
